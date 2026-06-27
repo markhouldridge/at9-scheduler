@@ -1,0 +1,19 @@
+{
+  "name": "at9-worker",
+  "version": "0.1.0",
+  "description": "Background worker for at9 — consumes RabbitMQ topics (starting with email via Resend).",
+  "private": true,
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.4",
+    "dotenv": "^16.4.5",
+    "resend": "^4.0.0"
+  }
+}
