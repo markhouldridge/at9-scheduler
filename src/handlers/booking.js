@@ -57,7 +57,7 @@ const handle = async (payload, ctx) => {
   if (!payload || typeof payload !== 'object') {
     throw new PermanentError('payload must be a JSON object');
   }
-  const { event, bookingIds } = payload;
+  const { event } = payload;
 
   if (!EMAILABLE.has(event)) {
     // booking.updated / anything else — no email yet. Consume and move on.
@@ -65,14 +65,23 @@ const handle = async (payload, ctx) => {
     return;
   }
 
-  if (!Array.isArray(bookingIds) || bookingIds.length === 0) {
+  // The webservice publishes the id as `bookingIds` (array) on multi-booking
+  // paths but `bookingId` (singular) on most single-booking paths (public,
+  // appointments, classes, single-room). Accept either.
+  const ids = Array.isArray(payload.bookingIds)
+    ? payload.bookingIds
+    : payload.bookingId
+      ? [payload.bookingId]
+      : [];
+
+  if (ids.length === 0) {
     // Emailable event with no bookings to look up — can never succeed.
-    throw new PermanentError('`bookingIds` is required to send a booking email');
+    throw new PermanentError('no bookingId(s) on payload to send a booking email');
   }
 
-  const rows = await fetchBookingRecipients(bookingIds);
+  const rows = await fetchBookingRecipients(ids);
   if (rows.length === 0) {
-    throw new PermanentError(`no bookings found for ids: ${bookingIds.join(', ')}`);
+    throw new PermanentError(`no bookings found for ids: ${ids.join(', ')}`);
   }
 
   const recipient = rows.find((r) => r.customer_email)?.customer_email;
