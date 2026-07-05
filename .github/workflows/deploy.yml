@@ -36,11 +36,12 @@ jobs:
           AT9_USER: ${{ secrets.AT9_USER }}
           AT9_PASSWORD: ${{ secrets.AT9_PASSWORD }}
         run: |
-          # The scheduler runs on the same host as RabbitMQ, so it reaches the
-          # broker over localhost using the shared AT9_USER / AT9_PASSWORD
-          # credentials. Brevo SMTP credentials are written here too.
+          # The scheduler runs on the same host as RabbitMQ, but the broker
+          # binds to its external IP (not loopback), so we connect on that IP
+          # using the shared AT9_USER / AT9_PASSWORD credentials. Brevo SMTP
+          # credentials are written here too.
           {
-            printf "RABBITMQ_HOST=%s\n" "localhost"
+            printf "RABBITMQ_HOST=%s\n" "${{ secrets.AT9_VPS_QUEUE }}"
             printf "RABBITMQ_PORT=%s\n" "5672"
             printf "RABBITMQ_VHOST=%s\n" "/"
             printf "RABBITMQ_BOOKINGS_EXCHANGE=%s\n" "bookings"
