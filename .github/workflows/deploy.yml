@@ -81,8 +81,15 @@ jobs:
           ssh -o StrictHostKeyChecking=no ${{ secrets.AT9_USER }}@${{ secrets.AT9_VPS_QUEUE }} << 'EOF'
             cd /opt/at9/scheduler
             export NVM_DIR="$HOME/.nvm"
+            # Bootstrap nvm on a fresh box — this VPS is primarily the RabbitMQ
+            # server, so Node tooling may be absent. Idempotent: only installs
+            # nvm when it's missing, so subsequent deploys skip this.
+            if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+              curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+            fi
             source "$NVM_DIR/nvm.sh"
-            nvm use 20 || nvm install 20
+            nvm install 20
+            nvm use 20
             npm ci --omit=dev
 
             # Ensure PM2 is installed
