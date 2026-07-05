@@ -2,17 +2,20 @@
 
 const { createBus } = require('./queue/connection');
 const { registerConsumer } = require('./queue/consumer');
-const emailHandler = require('./handlers/email');
+const { rabbitmq } = require('./config');
+const bookingHandler = require('./handlers/booking');
 const log = require('./logger');
 
 const bus = createBus();
 
-// One queue per concern. Future topics (e.g. SMS, push) register their
-// own queue + bindings here without touching the bus or consumer code.
+// Consume the same durable queue + topics the webservice publishes to
+// (exchange `bookings`, queue `booking-messages`, routing `booking.#`).
+// Future concerns (e.g. SMS, push) register their own queue + bindings
+// here without touching the bus or consumer code.
 registerConsumer(bus, {
-  queue: 'at9.email',
-  bindings: ['email.*'],
-  handler: emailHandler.handle,
+  queue: rabbitmq.queue,
+  bindings: [rabbitmq.binding],
+  handler: bookingHandler.handle,
 });
 
 const shutdown = async (signal) => {

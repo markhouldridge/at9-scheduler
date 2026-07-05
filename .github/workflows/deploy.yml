@@ -22,6 +22,15 @@ jobs:
       - name: DEBUG — print deploy public key
         run: ssh-add -L
 
+      - name: Ensure deploy directories exist
+        run: |
+          # scp/rsync won't create the target dir, and this box is primarily
+          # the RabbitMQ server, so /opt/at9/scheduler may not exist on the
+          # first deploy. Create it (and the shared log dir) up front.
+          ssh -o StrictHostKeyChecking=no \
+            ${{ secrets.AT9_USER }}@${{ secrets.AT9_VPS_QUEUE }} \
+            "mkdir -p /opt/at9/scheduler /opt/at9/logs"
+
       - name: Write .env to server
         env:
           AT9_USER: ${{ secrets.AT9_USER }}
@@ -34,9 +43,15 @@ jobs:
             printf "RABBITMQ_HOST=%s\n" "localhost"
             printf "RABBITMQ_PORT=%s\n" "5672"
             printf "RABBITMQ_VHOST=%s\n" "/"
-            printf "RABBITMQ_EXCHANGE=%s\n" "at9.events"
+            printf "RABBITMQ_BOOKINGS_EXCHANGE=%s\n" "bookings"
+            printf "RABBITMQ_BOOKINGS_QUEUE=%s\n" "booking-messages"
             printf "AT9_USER='%s'\n" "$AT9_USER"
             printf "AT9_PASSWORD='%s'\n" "$AT9_PASSWORD"
+            printf "DB_HOST=%s\n" "db1.at9.app"
+            printf "DB_PORT=%s\n" "5432"
+            printf "DB_USER=%s\n" "postgres"
+            printf "DB_NAME=%s\n" "at9"
+            printf "DB_PASSWORD='%s'\n" "Ib1716331714079446!"
             printf "BREVO_SMTP_HOST=%s\n" "smtp-relay.brevo.com"
             printf "BREVO_SMTP_PORT=%s\n" "587"
             printf "BREVO_SMTP_USER='%s'\n" "b0e9ad001@smtp-brevo.com"

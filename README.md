@@ -14,13 +14,15 @@ it reaches the broker over `localhost` with the shared `AT9_USER` /
 
 ```
   webservice / app  ──publish──▶  RabbitMQ  ──consume──▶  scheduler  ──▶  Brevo / …
-                                  (at9.events)
+                                  (bookings)
 ```
 
-`webservice` (and anything else) publishes to the topic exchange
-`at9.events`. Each scheduler queue is bound to a routing-key pattern and
-processes those messages independently — adding a new concern is one
-new queue + one new handler.
+`webservice` publishes booking lifecycle events to the durable topic
+exchange `bookings` (see `webservice/src/modules/queue.js`); they land in
+the durable `booking-messages` queue. The scheduler binds that queue to
+`booking.#` and processes each event. Adding a new concern is one new
+queue + one new handler — the exchange/queue/topics here are kept in sync
+with the webservice publisher.
 
 ## Layout
 
@@ -36,14 +38,18 @@ scheduler/
     ├── index.js              # boot: registers consumers, wires signals
     ├── config.js             # env loader/validator
     ├── logger.js             # tiny JSON-line logger
+    ├── modules/
+    │   └── db.js             # shared Postgres pool
     ├── queue/
     │   ├── connection.js     # reconnecting RabbitMQ bus
     │   ├── consumer.js       # generic registerConsumer(...)
     │   └── errors.js         # PermanentError
     ├── services/
-    │   └── brevo.js          # Brevo SMTP wrapper (nodemailer)
+    │   ├── brevo.js          # Brevo SMTP wrapper (nodemailer)
+    │   └── bookingRepo.js    # reads customer + booking detail for emails
     └── handlers/
-        └── email.js          # consumes email.* — sends via Brevo
+        ├── booking.js        # consumes booking.# — looks up + emails the customer
+        └── email.js          # Brevo email payload handler (reserved)
 ```
 
 Each handler is just a function `(payload, ctx) => Promise<void>`. Throw
@@ -64,12 +70,18 @@ Required env vars:
 | Var | Required | Default | Notes |
 |---|---|---|---|
 | `RABBITMQ_URL` | – | – | full AMQP URL; wins over the discrete parts when set |
-| `RABBITMQ_HOST` | – | `localhost` | broker host (scheduler runs on the broker) |
+| `RABBITMQ_HOST` | – | `87.106.102.51` | broker host (deploy sets `localhost` — scheduler runs on the broker) |
 | `RABBITMQ_PORT` | – | `5672` | non-TLS AMQP |
 | `RABBITMQ_VHOST` | – | `/` | virtual host |
 | `AT9_USER` | – | – | RabbitMQ username (shared with webservice) |
 | `AT9_PASSWORD` | – | – | RabbitMQ password (shared with webservice) |
-| `RABBITMQ_EXCHANGE` | – | `at9.events` | topic exchange producers publish to |
+| `RABBITMQ_BOOKINGS_EXCHANGE` | – | `bookings` | topic exchange the webservice publishes to |
+| `RABBITMQ_BOOKINGS_QUEUE` | – | `booking-messages` | durable queue bound to `booking.#` |
+| `DB_HOST` | – | `db1.at9.app` | Postgres host (shared with webservice) |
+| `DB_PORT` | – | `5432` | Postgres port |
+| `DB_USER` | – | `postgres` | Postgres user |
+| `DB_NAME` | – | `at9` | Postgres database |
+| `DB_PASSWORD` | ✅ | – | Postgres password |
 | `BREVO_SMTP_HOST` | – | `smtp-relay.brevo.com` | Brevo SMTP relay host |
 | `BREVO_SMTP_PORT` | – | `587` | STARTTLS |
 | `BREVO_SMTP_USER` | ✅ | – | Brevo SMTP login |
@@ -81,52 +93,46 @@ Required env vars:
 
 ## Topics
 
-### `email.*`
+### `booking.#`
 
-Queue: `at9.email` — bindings: `email.*` (e.g. `email.welcome`,
-`email.booking.confirmed`). The routing key is included in the
-`email.sent` log line so producers can be traced without payload
-inspection.
+Queue: `booking-messages` — binding: `booking.#` on the `bookings`
+exchange. Matches the webservice publisher exactly, so the scheduler
+receives every `booking.created` / `booking.updated` / `booking.cancelled`
+event. The routing key is included in the `booking.event` log line.
 
-Payload (JSON, UTF-8):
+Payload (JSON, UTF-8) — metadata stamped by the publisher (see the `*Meta`
+objects in `webservice/src/routes/*.js`):
 
 ```jsonc
 {
-  "to":       "user@example.com",   // or ["a@x.com", "b@x.com"]
-  "from":     "Acme <hi@acme.com>", // optional — falls back to EMAIL_FROM
-  "replyTo":  "support@acme.com",   // optional
-  "subject":  "Welcome to Acme",
-  "html":     "<p>…</p>",           // either html or text required
-  "text":     "Plain version…"
+  "event":              "booking.created", // | booking.updated | booking.cancelled
+  "source":             "provider",        // provider | public | self
+  "organisationId":     "org_123",
+  "entityType":         "room",
+  "entityIds":          ["ent_1"],
+  "bookingIds":         ["bk_1"],
+  "reservationGroupId": "grp_1",           // optional
+  "customerId":         "cus_1",           // optional
+  "publishedAt":        "2026-07-05T…Z"    // stamped by the publisher
 }
 ```
 
-Publish example (Node, using `amqplib`):
+These events carry **no** recipient address, so the handler reads the
+customer email + booking reference from Postgres (`services/bookingRepo.js`,
+keyed by `bookingIds`) and sends via Brevo (`services/brevo.js`):
 
-```js
-const amqp = require('amqplib');
+- `booking.created` → **confirmation** email to the customer
+- `booking.cancelled` → **cancellation** email to the customer
+- `booking.updated` → logged and skipped (no email yet)
 
-const conn = await amqp.connect(process.env.RABBITMQ_URL);
-const ch = await conn.createChannel();
-await ch.assertExchange('at9.events', 'topic', { durable: true });
+A booking with no customer email on file is dropped (`PermanentError`) —
+retrying can't help. Email copy is a first pass; templates and provider
+notifications aren't wired yet.
 
-ch.publish(
-  'at9.events',
-  'email.booking.confirmed',
-  Buffer.from(JSON.stringify({
-    to: 'mark@example.com',
-    subject: 'Your booking is confirmed',
-    html: '<p>See you on Friday.</p>',
-  })),
-  { contentType: 'application/json', persistent: true },
-);
-
-await ch.close();
-await conn.close();
-```
-
-`persistent: true` keeps the message on disk so an unexpected broker
-restart doesn't drop it before the scheduler consumes it.
+The webservice publishes these after the DB commit — see
+`webservice/src/modules/queue.js`. `persistent: true` keeps each message on
+disk so an unexpected broker restart doesn't drop it before the scheduler
+consumes it.
 
 ## Adding a new topic
 
@@ -177,16 +183,17 @@ Required GitHub secrets:
 | `AT9_USER` | SSH login user (`at9`), also the RabbitMQ username written into `.env` |
 | `AT9_PASSWORD` | RabbitMQ password written into `.env` |
 
-The Brevo SMTP credentials are set in the deploy workflow.
+The Brevo SMTP credentials and the Postgres password are set in the deploy
+workflow.
 
 ## Local testing without producers
 
-You can publish a test email straight from `rabbitmqctl` or the
-RabbitMQ management UI — point the routing key at `email.test` and the
-body at the JSON example above.
+You can publish a test booking event straight from `rabbitmqctl` or the
+RabbitMQ management UI — publish to the `bookings` exchange with a routing
+key like `booking.created` and the JSON body above.
 
 Or, with `amqplib` installed globally:
 
 ```bash
-node -e "const a=require('amqplib');(async()=>{const c=await a.connect(process.env.RABBITMQ_URL);const ch=await c.createChannel();await ch.assertExchange('at9.events','topic',{durable:true});ch.publish('at9.events','email.test',Buffer.from(JSON.stringify({to:'you@example.com',subject:'Test',text:'Hello'})),{contentType:'application/json',persistent:true});await ch.close();await c.close();})()"
+node -e "const a=require('amqplib');(async()=>{const c=await a.connect(process.env.RABBITMQ_URL);const ch=await c.createChannel();await ch.assertExchange('bookings','topic',{durable:true});ch.publish('bookings','booking.created',Buffer.from(JSON.stringify({event:'booking.created',organisationId:'org_test',bookingIds:['bk_test']})),{contentType:'application/json',persistent:true});await ch.close();await c.close();})()"
 ```
