@@ -1,33 +1,37 @@
-# at9-worker
+# at9-scheduler
 
-Background worker service for at9. Consumes RabbitMQ topic messages
+Background scheduler service for at9. Consumes RabbitMQ topic messages
 and dispatches them to external services. Today it handles transactional
-email via [Resend](https://resend.com); the layout is intentionally
-generic so additional topics (SMS, push, webhooks…) drop in alongside
-without restructuring.
+email via [Brevo](https://www.brevo.com) (SMTP relay); the layout is
+intentionally generic so additional topics (SMS, push, webhooks…) drop in
+alongside without restructuring.
 
-Runs on the same host as RabbitMQ (`queue.at9.app`) for now to keep the
-broker round-trip local.
+Runs on the **same host as RabbitMQ** to keep the broker round-trip local —
+it reaches the broker over `localhost` with the shared `AT9_USER` /
+`AT9_PASSWORD` credentials.
 
 ## How it fits
 
 ```
-  webservice / app  ──publish──▶  RabbitMQ  ──consume──▶  worker  ──▶  Resend / …
+  webservice / app  ──publish──▶  RabbitMQ  ──consume──▶  scheduler  ──▶  Brevo / …
                                   (at9.events)
 ```
 
 `webservice` (and anything else) publishes to the topic exchange
-`at9.events`. Each worker queue is bound to a routing-key pattern and
+`at9.events`. Each scheduler queue is bound to a routing-key pattern and
 processes those messages independently — adding a new concern is one
 new queue + one new handler.
 
 ## Layout
 
 ```
-worker/
+scheduler/
 ├── package.json
+├── pm2.config.js             # PM2 process definition (used by the deploy)
 ├── README.md
 ├── .env.example
+├── .github/workflows/
+│   └── deploy.yml            # deploys to the RabbitMQ VPS on push to master
 └── src/
     ├── index.js              # boot: registers consumers, wires signals
     ├── config.js             # env loader/validator
@@ -37,9 +41,9 @@ worker/
     │   ├── consumer.js       # generic registerConsumer(...)
     │   └── errors.js         # PermanentError
     ├── services/
-    │   └── resend.js         # Resend SDK wrapper
+    │   └── brevo.js          # Brevo SMTP wrapper (nodemailer)
     └── handlers/
-        └── email.js          # consumes email.* — sends via Resend
+        └── email.js          # consumes email.* — sends via Brevo
 ```
 
 Each handler is just a function `(payload, ctx) => Promise<void>`. Throw
@@ -49,8 +53,8 @@ succeed; anything else is treated as transient and requeued once.
 ## Setup
 
 ```bash
-cd worker
-cp .env.example .env   # fill in RESEND_API_KEY and your RABBITMQ_URL
+cd scheduler
+cp .env.example .env   # fill in the Brevo SMTP + RabbitMQ credentials
 npm install
 npm start
 ```
@@ -59,9 +63,17 @@ Required env vars:
 
 | Var | Required | Default | Notes |
 |---|---|---|---|
-| `RABBITMQ_URL` | – | `amqp://localhost:5672` | full AMQP URL |
+| `RABBITMQ_URL` | – | – | full AMQP URL; wins over the discrete parts when set |
+| `RABBITMQ_HOST` | – | `localhost` | broker host (scheduler runs on the broker) |
+| `RABBITMQ_PORT` | – | `5672` | non-TLS AMQP |
+| `RABBITMQ_VHOST` | – | `/` | virtual host |
+| `AT9_USER` | – | – | RabbitMQ username (shared with webservice) |
+| `AT9_PASSWORD` | – | – | RabbitMQ password (shared with webservice) |
 | `RABBITMQ_EXCHANGE` | – | `at9.events` | topic exchange producers publish to |
-| `RESEND_API_KEY` | ✅ | – | from https://resend.com/api-keys |
+| `BREVO_SMTP_HOST` | – | `smtp-relay.brevo.com` | Brevo SMTP relay host |
+| `BREVO_SMTP_PORT` | – | `587` | STARTTLS |
+| `BREVO_SMTP_USER` | ✅ | – | Brevo SMTP login |
+| `BREVO_SMTP_PASSWORD` | ✅ | – | Brevo SMTP key |
 | `EMAIL_FROM` | – | `At9 <noreply@at9.app>` | default `From:` — per-message `from` overrides |
 | `LOG_LEVEL` | – | `info` | `debug` / `info` / `warn` / `error` |
 
@@ -114,7 +126,7 @@ await conn.close();
 ```
 
 `persistent: true` keeps the message on disk so an unexpected broker
-restart doesn't drop it before the worker consumes it.
+restart doesn't drop it before the scheduler consumes it.
 
 ## Adding a new topic
 
@@ -143,21 +155,29 @@ all shared.
   handler can't be flooded.
 - **Retry once**: transient handler errors `nack(requeue=true)` on the
   first delivery, then drop on the retry. `PermanentError` drops
-  immediately. There's no DLQ wired yet — failures land in the worker
+  immediately. There's no DLQ wired yet — failures land in the scheduler
   log.
 - **Graceful shutdown**: `SIGINT` / `SIGTERM` close the channel and
   connection before exit so in-flight messages settle.
 
 ## Deployment
 
-Same server as the rest of the stack. Recommended PM2 entry:
+Pushing to `master` triggers `.github/workflows/deploy.yml`, which mirrors
+the webservice deploy: it SSHes into the RabbitMQ VPS, writes `.env` from
+GitHub secrets, rsyncs the code to `/opt/at9/scheduler`, runs `npm ci`, and
+(re)starts the process under PM2 using `pm2.config.js` (app name
+`at9-scheduler`).
 
-```bash
-pm2 start src/index.js --name at9-worker --time
-```
+Required GitHub secrets:
 
-The webservice already runs under PM2; keeping the worker there gives
-you a single dashboard for logs, restarts, and memory.
+| Secret | Purpose |
+|---|---|
+| `AT9_VPS_QUEUE` | RabbitMQ server host / external IP |
+| `AT9_VPS_QUEUE_SSH_KEY` | SSH private key for the deploy user |
+| `AT9_USER` | SSH login user (`at9`), also the RabbitMQ username written into `.env` |
+| `AT9_PASSWORD` | RabbitMQ password written into `.env` |
+
+The Brevo SMTP credentials are set in the deploy workflow.
 
 ## Local testing without producers
 

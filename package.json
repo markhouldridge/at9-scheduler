@@ -1,7 +1,7 @@
 {
-  "name": "at9-worker",
+  "name": "at9-scheduler",
   "version": "0.1.0",
-  "description": "Background worker for at9 — consumes RabbitMQ topics (starting with email via Resend).",
+  "description": "Scheduler for at9 — consumes RabbitMQ topics (starting with email via Brevo).",
   "private": true,
   "main": "src/index.js",
   "scripts": {
@@ -14,6 +14,6 @@
   "dependencies": {
     "amqplib": "^0.10.4",
     "dotenv": "^16.4.5",
-    "resend": "^4.0.0"
+    "nodemailer": "^9.0.3"
   }
 }

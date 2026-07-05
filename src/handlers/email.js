@@ -1,7 +1,7 @@
 'use strict';
 
 const { PermanentError } = require('../queue/errors');
-const { sendEmail } = require('../services/resend');
+const { sendEmail } = require('../services/brevo');
 const log = require('../logger');
 
 // Expected payload shape (one of `html` / `text` required):
@@ -15,8 +15,8 @@ const log = require('../logger');
 //   }
 //
 // Validation failures throw PermanentError — the message is dropped
-// rather than retried forever. Transient failures (network, 5xx from
-// Resend) propagate as ordinary errors and get one requeue.
+// rather than retried forever. Transient failures (network, SMTP 4xx/5xx
+// from Brevo) propagate as ordinary errors and get one requeue.
 const handle = async (payload, ctx) => {
   if (!payload || typeof payload !== 'object') {
     throw new PermanentError('payload must be a JSON object');

@@ -16,7 +16,7 @@ registerConsumer(bus, {
 });
 
 const shutdown = async (signal) => {
-  log.info('worker.shutdown', { signal });
+  log.info('scheduler.shutdown', { signal });
   try {
     await bus.stop();
   } finally {
@@ -27,12 +27,12 @@ const shutdown = async (signal) => {
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('unhandledRejection', (err) => {
-  log.error('worker.unhandled_rejection', { err: err?.message ?? String(err) });
+  log.error('scheduler.unhandled_rejection', { err: err?.message ?? String(err) });
 });
 
 bus.start().catch((err) => {
-  log.error('worker.boot.failed', { err: err.message });
+  log.error('scheduler.boot.failed', { err: err.message });
   process.exit(1);
 });
 
-log.info('worker.starting');
+log.info('scheduler.starting');

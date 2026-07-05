@@ -1,0 +1,89 @@
+name: Deploy scheduler to RabbitMQ VPS
+
+on:
+  workflow_dispatch: # ✅ Allows manual triggering from GitHub UI
+  push:
+    branches:
+      - master # Deploy only when master is updated
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.AT9_VPS_QUEUE_SSH_KEY }}
+
+      - name: DEBUG — print deploy public key
+        run: ssh-add -L
+
+      - name: Write .env to server
+        env:
+          AT9_USER: ${{ secrets.AT9_USER }}
+          AT9_PASSWORD: ${{ secrets.AT9_PASSWORD }}
+        run: |
+          # The scheduler runs on the same host as RabbitMQ, so it reaches the
+          # broker over localhost using the shared AT9_USER / AT9_PASSWORD
+          # credentials. Brevo SMTP credentials are written here too.
+          {
+            printf "RABBITMQ_HOST=%s\n" "localhost"
+            printf "RABBITMQ_PORT=%s\n" "5672"
+            printf "RABBITMQ_VHOST=%s\n" "/"
+            printf "RABBITMQ_EXCHANGE=%s\n" "at9.events"
+            printf "AT9_USER='%s'\n" "$AT9_USER"
+            printf "AT9_PASSWORD='%s'\n" "$AT9_PASSWORD"
+            printf "BREVO_SMTP_HOST=%s\n" "smtp-relay.brevo.com"
+            printf "BREVO_SMTP_PORT=%s\n" "587"
+            printf "BREVO_SMTP_USER='%s'\n" "b0e9ad001@smtp-brevo.com"
+            printf "BREVO_SMTP_PASSWORD='%s'\n" "XUYqc2wtgk7CWMmy"
+            printf "EMAIL_FROM='%s'\n" "At9 <noreply@at9.app>"
+            printf "LOG_LEVEL=%s\n" "info"
+          } > /tmp/.env.deploy
+          scp -o StrictHostKeyChecking=no /tmp/.env.deploy \
+            ${{ secrets.AT9_USER }}@${{ secrets.AT9_VPS_QUEUE }}:/opt/at9/scheduler/.env
+          ssh -o StrictHostKeyChecking=no \
+            ${{ secrets.AT9_USER }}@${{ secrets.AT9_VPS_QUEUE }} \
+            "chmod 600 /opt/at9/scheduler/.env"
+          rm /tmp/.env.deploy
+
+      - name: Copy files to VPS
+        run: |
+          rsync -avz --delete \
+            --exclude='logs/' \
+            --exclude='.env' \
+            --exclude='.git/' \
+            --exclude='node_modules/' \
+            -e "ssh -o StrictHostKeyChecking=no" \
+            ./ ${{ secrets.AT9_USER }}@${{ secrets.AT9_VPS_QUEUE }}:/opt/at9/scheduler/
+
+      - name: Install Node.js dependencies on VPS
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.AT9_USER }}@${{ secrets.AT9_VPS_QUEUE }} << 'EOF'
+            cd /opt/at9/scheduler
+            export NVM_DIR="$HOME/.nvm"
+            source "$NVM_DIR/nvm.sh"
+            nvm use 20 || nvm install 20
+            npm ci --omit=dev
+
+            # Ensure PM2 is installed
+            if ! command -v pm2 > /dev/null; then
+              npm install -g pm2
+            fi
+
+            # Load .env into the shell so PM2 inherits the variables.
+            # PM2's env_file config shows the path but does not reliably inject
+            # variables into the process — sourcing here is the reliable fix.
+            set -a
+            source /opt/at9/scheduler/.env
+            set +a
+
+            # Restart with --update-env so the inherited environment takes effect
+            pm2 startOrReload /opt/at9/scheduler/pm2.config.js --update-env || pm2 reload at9-scheduler --update-env
+
+            pm2 save
+          EOF

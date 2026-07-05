@@ -12,6 +12,20 @@ const log = require('../logger');
 
 const MAX_BACKOFF_MS = 30_000;
 
+// A full RABBITMQ_URL wins when set; otherwise connect via the object form
+// (matches webservice/src/modules/queue.js) so special characters in the
+// AT9_PASSWORD need no percent-encoding. On the broker host this resolves to
+// localhost with the shared AT9_USER / AT9_PASSWORD credentials.
+const connectTarget = () =>
+  rabbitmq.url || {
+    protocol: 'amqp',
+    hostname: rabbitmq.host,
+    port: rabbitmq.port,
+    username: rabbitmq.username,
+    password: rabbitmq.password,
+    vhost: rabbitmq.vhost,
+  };
+
 const createBus = () => {
   const channelHooks = []; // [(channel) => Promise<void>]
   let connection = null;
@@ -24,8 +38,9 @@ const createBus = () => {
   const connect = async () => {
     while (!stopping) {
       try {
-        log.info('rabbit.connecting', { url: rabbitmq.url });
-        connection = await amqp.connect(rabbitmq.url);
+        // Never log credentials — just the host we're reaching for.
+        log.info('rabbit.connecting', { host: rabbitmq.url ? '(url)' : rabbitmq.host });
+        connection = await amqp.connect(connectTarget());
         connection.on('error', (err) => {
           log.warn('rabbit.connection.error', { err: err.message });
         });
