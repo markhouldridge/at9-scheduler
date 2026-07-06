@@ -35,6 +35,7 @@ jobs:
         env:
           AT9_USER: ${{ secrets.AT9_USER }}
           AT9_PASSWORD: ${{ secrets.AT9_PASSWORD }}
+          BREVO_SMTP_KEY: ${{ secrets.BREVO_SMTP_KEY }}
         run: |
           # The scheduler runs on the same host as RabbitMQ, but the broker
           # binds to its external IP (not loopback), so we connect on that IP
@@ -56,7 +57,7 @@ jobs:
             printf "BREVO_SMTP_HOST=%s\n" "smtp-relay.brevo.com"
             printf "BREVO_SMTP_PORT=%s\n" "587"
             printf "BREVO_SMTP_USER='%s'\n" "b0e9ad001@smtp-brevo.com"
-            printf "BREVO_SMTP_PASSWORD='%s'\n" "XUYqc2wtgk7CWMmy"
+            printf "BREVO_SMTP_PASSWORD='%s'\n" "$BREVO_SMTP_KEY"
             printf "EMAIL_FROM='%s'\n" "At9 <noreply@at9.app>"
             printf "LOG_LEVEL=%s\n" "info"
           } > /tmp/.env.deploy

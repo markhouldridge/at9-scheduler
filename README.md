@@ -182,9 +182,10 @@ Required GitHub secrets:
 | `AT9_VPS_QUEUE_SSH_KEY` | SSH private key for the deploy user |
 | `AT9_USER` | SSH login user (`at9`), also the RabbitMQ username written into `.env` |
 | `AT9_PASSWORD` | RabbitMQ password written into `.env` |
+| `BREVO_SMTP_KEY` | Brevo SMTP key written into `.env` as `BREVO_SMTP_PASSWORD` |
 
-The Brevo SMTP credentials and the Postgres password are set in the deploy
-workflow.
+The Brevo SMTP **key** comes from the `BREVO_SMTP_KEY` secret; the Brevo
+login and the Postgres password are set in the deploy workflow.
 
 ## Local testing without producers
 
