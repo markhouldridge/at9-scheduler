@@ -1,5 +1,11 @@
 'use strict';
 
+// Before anything else loads. The webservice does the same in app.js:5 — every
+// At9 service runs in UTC so date handling cannot depend on the host's zone
+// (see the root CLAUDE.md). This has to precede the `pg` require below, since
+// node-postgres reads the process zone when parsing zone-less timestamps.
+process.env.TZ = 'UTC';
+
 const { createBus } = require('./queue/connection');
 const { registerConsumer } = require('./queue/consumer');
 const { rabbitmq } = require('./config');

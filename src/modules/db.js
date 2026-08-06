@@ -15,6 +15,11 @@ const pool = new Pool({
   password: db.password,
   max: 4,
   idleTimeoutMillis: 30_000,
+  // Pin every session to UTC, exactly as the webservice pool does. This was
+  // missing despite the comment above claiming the two mirror each other: any
+  // read of a zone-less `timestamp` column would have been interpreted in the
+  // server's own zone and silently shifted.
+  options: '-c timezone=UTC',
 });
 
 module.exports = pool;
