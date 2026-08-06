@@ -4,6 +4,7 @@ const { createBus } = require('./queue/connection');
 const { registerConsumer } = require('./queue/consumer');
 const { rabbitmq } = require('./config');
 const bookingHandler = require('./handlers/booking');
+const reminders = require('./jobs/reminders');
 const log = require('./logger');
 
 const bus = createBus();
@@ -14,13 +15,18 @@ const bus = createBus();
 // here without touching the bus or consumer code.
 registerConsumer(bus, {
   queue: rabbitmq.queue,
-  bindings: [rabbitmq.binding],
+  bindings: rabbitmq.bindings ?? [rabbitmq.binding],
   handler: bookingHandler.handle,
 });
+
+// Booking reminders are the one email nothing publishes an event for — the
+// scheduler polls for bookings due tomorrow instead. See jobs/reminders.js.
+const stopReminders = reminders.start();
 
 const shutdown = async (signal) => {
   log.info('scheduler.shutdown', { signal });
   try {
+    stopReminders();
     await bus.stop();
   } finally {
     process.exit(0);

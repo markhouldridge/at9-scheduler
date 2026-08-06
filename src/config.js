@@ -35,6 +35,9 @@ module.exports = {
     // Durable queue bound to `booking.#` — booking.created | booking.updated
     // | booking.cancelled all land here.
     queue: optional('RABBITMQ_BOOKINGS_QUEUE', 'booking-messages'),
+    // Booking lifecycle AND waitlist offers land in the same queue — one
+    // handler, one place emails are sent from.
+    bindings: ['booking.#', 'waitlist.#'],
     binding: 'booking.#',
   },
   db: {

@@ -1,8 +1,9 @@
 'use strict';
 
 const { PermanentError } = require('../queue/errors');
-const { fetchBookingRecipients } = require('../services/bookingRepo');
+const { fetchBookingRecipients, fetchWaitlistOffer } = require('../services/bookingRepo');
 const { sendEmail } = require('../services/brevo');
+const { buildBookingEmail } = require('../templates/booking');
 const log = require('../logger');
 
 // Consumes booking lifecycle events published by the webservice
@@ -19,38 +20,58 @@ const log = require('../logger');
 //     reservationGroupId?, customerId?, publishedAt,
 //   }
 //
-// The event carries IDs only, so we read the customer email + booking
-// reference from Postgres (services/bookingRepo) and send via Brevo.
-//
-// NOTE: email copy below is a first pass — confirmation on create,
-// cancellation on cancel, to the customer. `booking.updated` is logged and
-// skipped for now. Templates / provider notifications are not wired yet.
+// The event carries IDs only, so the customer address and the booking detail
+// are read from Postgres (services/bookingRepo) and rendered by
+// templates/booking before going out through Brevo.
 
-// Event types that currently trigger a customer email.
-const EMAILABLE = new Set(['booking.created', 'booking.cancelled']);
+// Every lifecycle event now has a template. Anything else is consumed and
+// logged rather than retried.
+const EMAILABLE = new Set([
+  'booking.created',
+  'booking.updated',
+  'booking.cancelled',
+]);
 
-// Build the { subject, text } for an event.
-const buildEmail = (event, { orgName, customerName, refs, cancelReason }) => {
-  const business = orgName || 'your provider';
-  const greeting = `Hi ${customerName || 'there'},`;
-  const reference = refs.length > 1 ? `References: ${refs.join(', ')}` : `Reference: ${refs[0]}`;
+// A waitlist offer is not a booking, so it is looked up from its own table and
+// emailed with the deadline the customer has to accept by.
+const handleWaitlistOffer = async (payload, ctx) => {
+  const entryId = payload?.entryId;
+  if (!entryId) throw new PermanentError('waitlist event has no entryId');
 
-  if (event === 'booking.created') {
-    return {
-      subject: `Booking confirmed — ${business}`,
-      text: `${greeting}\n\nYour booking with ${business} is confirmed.\n${reference}\n\nThank you.`,
-    };
+  const offer = await fetchWaitlistOffer(entryId);
+  if (!offer) throw new PermanentError(`waitlist entry not found: ${entryId}`);
+  if (!offer.customer_email) {
+    throw new PermanentError('waitlist entry has no customer email address');
   }
-  if (event === 'booking.cancelled') {
-    return {
-      subject: `Booking cancelled — ${business}`,
-      text:
-        `${greeting}\n\nYour booking with ${business} has been cancelled.` +
-        (cancelReason ? `\nReason: ${cancelReason}` : '') +
-        `\n${reference}\n\nIf this is unexpected, please contact ${business}.`,
-    };
-  }
-  return null;
+
+  const built = buildBookingEmail('waitlist.offered', {
+    orgName: offer.org_name,
+    orgEmail: offer.org_email,
+    customerName: offer.customer_name,
+    entityType: offer.kind,
+    entityName: offer.entity_name,
+    startsAt: offer.starts_at,
+    expiresAt: offer.expires_at,
+  });
+
+  await sendEmail({
+    to: offer.customer_email,
+    ...(offer.org_email ? { replyTo: offer.org_email } : {}),
+    subject: built.subject,
+    html: built.html,
+    text: built.text,
+  });
+
+  log.info('email.sent', {
+    channel: 'waitlist',
+    event: 'waitlist.offered',
+    template: built.template,
+    subject: built.subject,
+    recipient_domain: String(offer.customer_email).split('@')[1] || null,
+    organisation: offer.org_name || null,
+    entity_type: offer.kind,
+    routing_key: ctx.routingKey,
+  });
 };
 
 const handle = async (payload, ctx) => {
@@ -59,8 +80,11 @@ const handle = async (payload, ctx) => {
   }
   const { event } = payload;
 
+  if (event === 'waitlist.offered') {
+    return handleWaitlistOffer(payload, ctx);
+  }
+
   if (!EMAILABLE.has(event)) {
-    // booking.updated / anything else — no email yet. Consume and move on.
     log.info('booking.event.skipped', { event, routing_key: ctx.routingKey });
     return;
   }
@@ -75,7 +99,6 @@ const handle = async (payload, ctx) => {
       : [];
 
   if (ids.length === 0) {
-    // Emailable event with no bookings to look up — can never succeed.
     throw new PermanentError('no bookingId(s) on payload to send a booking email');
   }
 
@@ -90,19 +113,54 @@ const handle = async (payload, ctx) => {
     throw new PermanentError('booking has no customer email address');
   }
 
+  // A multi-room reservation is several booking rows for one customer. The
+  // first row carries the shared detail; the references are collected so the
+  // customer gets one email listing every reference rather than one email per
+  // room.
+  const [first] = rows;
   const refs = rows.map((r) => r.reference).filter(Boolean);
-  const built = buildEmail(event, {
-    orgName: rows[0].org_name,
-    customerName: rows[0].customer_name,
-    refs: refs.length ? refs : ['(no reference)'],
-    cancelReason: rows[0].cancel_reason,
+
+  const built = buildBookingEmail(event, {
+    orgName: first.org_name,
+    orgEmail: first.org_email,
+    customerName: first.customer_name,
+    entityType: first.entity_type,
+    entityName:
+      rows.length > 1
+        ? rows.map((r) => r.entity_name).filter(Boolean).join(', ')
+        : first.entity_name,
+    startsAt: first.starts_at,
+    endsAt: first.ends_at,
+    guests: first.guests,
+    reference: refs.join(', ') || null,
+    cancelReason: first.cancel_reason,
   });
 
-  await sendEmail({ to: recipient, subject: built.subject, text: built.text });
-  log.info('booking.email.sent', {
+  if (!built) {
+    throw new PermanentError(`no template for event: ${event}`);
+  }
+
+  await sendEmail({
+    to: recipient,
+    // Replies reach the business rather than the noreply sender.
+    ...(first.org_email ? { replyTo: first.org_email } : {}),
+    subject: built.subject,
+    html: built.html,
+    text: built.text,
+  });
+
+  // One line per email, carrying enough to answer "did it send, which
+  // template, to whom, about what" without exposing the address itself.
+  log.info('email.sent', {
+    channel: 'booking',
     event,
-    routing_key: ctx.routingKey,
+    template: built.template,
+    subject: built.subject,
+    recipient_domain: String(recipient).split('@')[1] || null,
+    organisation: first.org_name || null,
+    entity_type: first.entity_type || null,
     bookings: rows.length,
+    routing_key: ctx.routingKey,
   });
 };
 

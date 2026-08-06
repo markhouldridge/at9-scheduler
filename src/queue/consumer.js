@@ -37,9 +37,19 @@ const registerConsumer = (bus, { queue, bindings, handler }) => {
         return;
       }
 
+      const startedAt = Date.now();
       try {
         await handler(payload, { routingKey });
         channel.ack(msg);
+        // The consume counterpart to the webservice's `queue.published` line —
+        // the pair is what shows a message made it end to end.
+        log.info('queue.consumed', {
+          queue,
+          routingKey,
+          organisation_id: payload?.organisationId ?? null,
+          source: payload?.source ?? null,
+          duration_ms: Date.now() - startedAt,
+        });
       } catch (err) {
         const permanent = err instanceof PermanentError;
         // `redelivered` distinguishes the first delivery from a retry —

@@ -47,10 +47,52 @@ scheduler/
     ├── services/
     │   ├── brevo.js          # Brevo SMTP wrapper (nodemailer)
     │   └── bookingRepo.js    # reads customer + booking detail for emails
+    ├── templates/
+    │   ├── layout.js         # shared HTML shell + plain-text shell
+    │   └── booking.js        # confirmation / reminder / cancelled / updated
+    ├── jobs/
+    │   └── reminders.js      # hourly sweep for bookings due tomorrow
     └── handlers/
         ├── booking.js        # consumes booking.# — looks up + emails the customer
         └── email.js          # Brevo email payload handler (reserved)
 ```
+
+## Emails
+
+Four transactional templates, all built by `templates/booking.js` and sent
+through Brevo's SMTP relay:
+
+| Email        | Trigger                     | Gated on            |
+| ------------ | --------------------------- | ------------------- |
+| Confirmation | `booking.created` event     | —                   |
+| Updated      | `booking.updated` event     | —                   |
+| Cancelled    | `booking.cancelled` event   | —                   |
+| Reminder     | hourly sweep, ~1 day before | `booking_reminders` |
+
+Every message goes out as **HTML + a plain-text alternative**. Times are
+formatted in **UTC**, matching the app and the database (root `CLAUDE.md`).
+`Reply-To` is the organisation's administrator, so a customer's reply reaches
+the business rather than the noreply sender.
+
+**The platform is invisible to the customer.** A customer booked with a salon,
+not with At9, so the organisation's name heads every email and the footer says
+the business sent it. At9 appears only in the sender address (`EMAIL_FROM`).
+There is no At9 wordmark, sign-off or link in the body — not even in a CSS
+class name or an HTML comment, both of which ship with the message.
+
+The reminder is the only one not driven by a queue event — nothing publishes
+"this booking is tomorrow". `jobs/reminders.js` sweeps hourly for active
+bookings starting 20–28 hours out whose organisation holds the
+`booking_reminders` capability, stamping `bookings.reminder_sent_at` before
+sending so a restart cannot double-send.
+
+### Deliverability
+
+The templates avoid the usual triggers — no remote images (the wordmark is
+live text), no web fonts, no link shorteners, a plain-text part on every
+message, and a real `Reply-To`. The rest is DNS and cannot be fixed in code:
+**SPF, DKIM and DMARC must be configured on the sending domain in Brevo**, or
+this mail lands in spam however well it is built.
 
 Each handler is just a function `(payload, ctx) => Promise<void>`. Throw
 `PermanentError` (from `queue/errors`) for messages that can never
