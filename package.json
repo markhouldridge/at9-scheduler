@@ -1,12 +1,13 @@
 {
   "name": "at9-scheduler",
   "version": "0.1.0",
-  "description": "Scheduler for at9 — consumes RabbitMQ topics (starting with email via Brevo).",
+  "description": "Scheduler for at9 \u2014 consumes RabbitMQ topics (starting with email via Brevo).",
   "private": true,
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"

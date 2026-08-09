@@ -39,6 +39,12 @@ module.exports = {
     // handler, one place emails are sent from.
     bindings: ['booking.#', 'waitlist.#'],
     binding: 'booking.#',
+    // Customer lifecycle (customer.welcome) gets its **own** queue rather than
+    // another binding on the booking one. A welcome that fails must not sit at
+    // the head of the line in front of a booking confirmation, and the two are
+    // rendered by different handlers from different payload shapes.
+    customerQueue: optional('RABBITMQ_CUSTOMERS_QUEUE', 'customer-messages'),
+    customerBindings: ['customer.#'],
   },
   db: {
     // Postgres — the scheduler reads booking/customer/organisation detail to
@@ -52,6 +58,36 @@ module.exports = {
     database: optional('DB_NAME', 'at9'),
     password: required('DB_PASSWORD'),
   },
+  // Test-account email redirection.
+  //
+  // The test accounts are addresses nobody owns — employee@hotel.com receives
+  // nothing, and hotel.com is not ours. Mail for them is re-addressed here so
+  // it can actually be read, with the intended recipient kept in the subject
+  // so one inbox can hold several test conversations without them blurring.
+  //
+  // Mirrors webservice/src/helpers/testUsers.js and the TEST_USERS list in
+  // app/src/constants/index.ts. Overridable by env so the addresses can change
+  // without a deploy of three services.
+  testEmail: {
+    redirectTo: optional('TEST_EMAIL_ACCOUNT', 'markhouldridge@gmail.com'),
+    addresses: optional(
+      'TEST_EMAIL_ADDRESSES',
+      [
+        'admin@hotel.com',
+        'employee@hotel.com',
+        'supervisor@hotel.com',
+        'user@hotel.com',
+        'customer@test.com',
+        'amy.smith@test.com',
+        'john.smith@test.com',
+        'onboarding@test.com',
+      ].join(','),
+    )
+      .split(',')
+      .map((a) => a.trim().toLowerCase())
+      .filter(Boolean),
+  },
+
   brevo: {
     // Brevo's SMTP relay. Host/port have safe defaults; the login and
     // password are required and come from the environment (never committed).

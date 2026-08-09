@@ -132,23 +132,24 @@ const fetchBookingsDueReminder = async ({
         AND u.email IS NOT NULL
         AND d.starts_at BETWEEN NOW() + ($1 || ' hours')::interval
                             AND NOW() + ($2 || ' hours')::interval
-        AND (
-              EXISTS (
-                SELECT 1
-                  FROM public.organisation_subscriptions os
-                  JOIN public.subscriptions s ON s.id = os.subscription_id
-                 WHERE os.organisation_id = b.organisation_id
-                   AND os.expires_at > NOW()
-                   AND 'booking_reminders' = ANY (s.capabilities)
-              )
-              -- During the 90-day trial an organisation has full access,
-              -- Team features included (root CLAUDE.md), and the webservice
-              -- gates the same way: active subscription OR trial, in
-              -- assertWithinBookingAllowance. Checking only the subscription
-              -- meant every trialling organisation silently got no reminders
-              -- — the one Team feature they could not tell was missing,
-              -- because nothing is shown when an email is not sent.
-              OR o.created > NOW() - INTERVAL '90 days'
+        -- Team only. The same question orgHasCapability asks in
+        -- webservice/src/helpers/capabilities.js, in SQL because the reminder
+        -- sweep never goes through that service.
+        --
+        -- (No backticks in here: this SQL lives in a JS template literal, and
+        -- one would end the string.)
+        --
+        -- There used to be a second branch here for the 90-day trial, which
+        -- granted every Team feature. The trial went when Solo became Free:
+        -- taking bookings costs nothing and Team is the only paid plan, so an
+        -- active subscription carrying the capability is the whole test.
+        AND EXISTS (
+              SELECT 1
+                FROM public.organisation_subscriptions os
+                JOIN public.subscriptions s ON s.id = os.subscription_id
+               WHERE os.organisation_id = b.organisation_id
+                 AND os.expires_at > NOW()
+                 AND 'booking_reminders' = ANY (s.capabilities)
             )
       ORDER BY d.starts_at
       LIMIT $3`,

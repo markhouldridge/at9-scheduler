@@ -10,6 +10,7 @@ const { createBus } = require('./queue/connection');
 const { registerConsumer } = require('./queue/consumer');
 const { rabbitmq } = require('./config');
 const bookingHandler = require('./handlers/booking');
+const customerHandler = require('./handlers/customer');
 const reminders = require('./jobs/reminders');
 const log = require('./logger');
 
@@ -23,6 +24,14 @@ registerConsumer(bus, {
   queue: rabbitmq.queue,
   bindings: rabbitmq.bindings ?? [rabbitmq.binding],
   handler: bookingHandler.handle,
+});
+
+// Customer lifecycle — a welcome when a provider adds someone and asks for it.
+// Its own queue, so a stuck welcome cannot delay a booking confirmation.
+registerConsumer(bus, {
+  queue: rabbitmq.customerQueue,
+  bindings: rabbitmq.customerBindings,
+  handler: customerHandler.handle,
 });
 
 // Booking reminders are the one email nothing publishes an event for — the

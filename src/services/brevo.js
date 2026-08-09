@@ -1,7 +1,8 @@
 'use strict';
 
 const nodemailer = require('nodemailer');
-const { brevo } = require('../config');
+const { brevo, testEmail } = require('../config');
+const log = require('../logger');
 
 // Thin wrapper around Brevo's SMTP relay (via nodemailer). Centralised so
 // handlers don't touch the transport directly — easier to mock in tests and
@@ -20,11 +21,44 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+// Re-addresses mail bound for a test account.
+//
+// Applied here rather than in each handler because this is the only place
+// email leaves the platform — a template added tomorrow gets the behaviour
+// without anyone remembering it exists.
+//
+// Recipients are mapped individually. A message addressed to both a test
+// account and a real customer keeps the real one: redirecting everything
+// would silently withhold mail from a person who is expecting it, and
+// redirecting nothing would send it into a domain we do not own.
+//
+// The intended recipient goes into the subject, so one inbox can hold several
+// test conversations without them blurring into each other.
+const redirect = (to, subject) => {
+  const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
+  const isTest = (a) => testEmail.addresses.includes(String(a).toLowerCase());
+  const intended = recipients.filter(isTest);
+
+  if (!intended.length) return { to: recipients, subject };
+
+  const mapped = [
+    ...new Set(
+      recipients.map((a) => (isTest(a) ? testEmail.redirectTo : a)),
+    ),
+  ];
+  log.info('email.redirected', {
+    intended: intended.join(', '),
+    to: testEmail.redirectTo,
+  });
+  return { to: mapped, subject: `[${intended.join(', ')}] ${subject}` };
+};
+
 const sendEmail = async ({ to, from, replyTo, subject, html, text }) => {
+  const routed = redirect(to, subject);
   const info = await transporter.sendMail({
     from: from || brevo.defaultFrom,
-    to: Array.isArray(to) ? to.join(', ') : to,
-    subject,
+    to: routed.to.join(', '),
+    subject: routed.subject,
     ...(html ? { html } : {}),
     ...(text ? { text } : {}),
     ...(replyTo ? { replyTo } : {}),
@@ -38,4 +72,4 @@ const sendEmail = async ({ to, from, replyTo, subject, html, text }) => {
   return { id: info.messageId };
 };
 
-module.exports = { sendEmail };
+module.exports = { sendEmail, redirect };
