@@ -3,7 +3,7 @@
 const { PermanentError } = require('../queue/errors');
 const { fetchBookingRecipients, fetchWaitlistOffer } = require('../services/bookingRepo');
 const { sendEmail } = require('../services/brevo');
-const { buildBookingEmail } = require('../templates/booking');
+const { buildBookingEmail, providerNotice } = require('../templates/booking');
 const log = require('../logger');
 
 // Consumes booking lifecycle events published by the webservice
@@ -46,6 +46,7 @@ const handleWaitlistOffer = async (payload, ctx) => {
 
   const built = buildBookingEmail('waitlist.offered', {
     orgName: offer.org_name,
+    orgTimezone: offer.org_timezone,
     orgEmail: offer.org_email,
     customerName: offer.customer_name,
     entityType: offer.kind,
@@ -122,6 +123,9 @@ const handle = async (payload, ctx) => {
 
   const built = buildBookingEmail(event, {
     orgName: first.org_name,
+    // Which clock the times below are on. See the note in templates/booking.js:
+    // the numbers were always the business's wall clock, but nothing said so.
+    orgTimezone: first.org_timezone,
     orgEmail: first.org_email,
     customerName: first.customer_name,
     entityType: first.entity_type,
@@ -148,6 +152,65 @@ const handle = async (payload, ctx) => {
     html: built.html,
     text: built.text,
   });
+
+  // ⚠️ The business's own copy, after the customer's and never instead of it.
+  //
+  // Only for new bookings and cancellations — an update is noise to a business
+  // that made the change itself, which is the commonest way one happens.
+  //
+  // Sent only when `organisations.email` is set, which is now the *only* thing
+  // `org_email` can be — the admin fallback is gone, so there is one address
+  // and no chance of notifying somebody who never asked to be.
+  //
+  // Failing here must not fail the job. The customer's email has already gone,
+  // and a throw would requeue the whole thing and send it to them twice — a
+  // duplicate confirmation is a worse outcome than a missed internal copy.
+  const notifyTo = first.org_email;
+  if (notifyTo && (event === 'booking.created' || event === 'booking.cancelled')) {
+    try {
+      const notice = providerNotice(event, {
+        orgName: first.org_name,
+        orgTimezone: first.org_timezone,
+        customerName: first.customer_name,
+        entityType: first.entity_type,
+        entityName:
+          rows.length > 1
+            ? rows.map((r) => r.entity_name).filter(Boolean).join(', ')
+            : first.entity_name,
+        startsAt: first.starts_at,
+        endsAt: first.ends_at,
+        guests: first.guests,
+        reference: refs.join(', ') || null,
+        cancelReason: first.cancel_reason,
+      });
+
+      await sendEmail({
+        to: notifyTo,
+        subject: notice.subject,
+        html: notice.html,
+        text: notice.text,
+      });
+
+      log.info('email.sent', {
+        channel: 'booking',
+        event,
+        template: notice.template,
+        subject: notice.subject,
+        recipient_domain: String(notifyTo).split('@')[1] || null,
+        organisation: first.org_name || null,
+        audience: 'provider',
+        bookings: rows.length,
+        routing_key: ctx.routingKey,
+      });
+    } catch (err) {
+      log.error('email.provider_notice_failed', {
+        event,
+        organisation: first.org_name || null,
+        error: err?.message,
+        routing_key: ctx.routingKey,
+      });
+    }
+  }
 
   // One line per email, carrying enough to answer "did it send, which
   // template, to whom, about what" without exposing the address itself.

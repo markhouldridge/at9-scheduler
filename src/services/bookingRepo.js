@@ -60,16 +60,27 @@ const BOOKING_DETAIL_CTE = `
 // its administrator's. It is used as the message's Reply-To only — never
 // printed in the body, so a customer can always reach a human without the
 // address being exposed to whatever scrapes the email later.
+// ⚠️ The organisation's own address, and **nothing else**.
+//
+// This used to fall back to the first administrator's personal address when the
+// organisation had not set one. That was wrong in two ways: it put a named
+// individual in front of every customer as the reply-to, and it changed
+// silently when that person left or another admin turned out to have been
+// created first. Nobody chose to be that address; they were simply first.
+//
+// So there is no fallback. `organisations.email` or nothing — and nothing is a
+// legitimate state, meaning the business has not asked to be contacted or
+// notified. Customer mail then goes out with no reply-to, and the templates
+// already say "contact the business" rather than "reply to this" when it is
+// absent (`contactLine`).
+//
+// One address, set in Settings, Organisation. It is the only place a business
+// email comes from.
 const ORG_EMAIL_LATERAL = `
       LEFT JOIN LATERAL (
-        SELECT au.email
-          FROM public.organisation_users ou
-          JOIN public.users au ON au.id = ou.user_id
-         WHERE ou.organisation_id = b.organisation_id
-           AND ou.is_admin
-           AND au.email IS NOT NULL
-         ORDER BY au.created
-         LIMIT 1
+        SELECT NULLIF(TRIM(org_for_email.email), '') AS email
+          FROM public.organisations org_for_email
+         WHERE org_for_email.id = b.organisation_id
       ) org_admin ON true`;
 
 const EMAIL_COLUMNS = `
@@ -79,7 +90,15 @@ const EMAIL_COLUMNS = `
     b.is_active,
     b.organisation_id,
     o.name           AS org_name,
-    org_admin.email  AS org_email,
+    -- The zone the times in this email are in. A booking is the wall clock at
+    -- the business, so a customer in another country reading "9:00 am" has no
+    -- way to know whose nine o'clock it is unless the email says.
+    o.timezone       AS org_timezone,
+    -- The organisation's own address, or null. Used for both the reply-to on
+    -- customer mail and the notification sent to the business, because they are
+    -- now the same address by definition.
+    -- (No backticks in here: this is inside a JS template literal.)
+    org_admin.email AS org_email,
     u.email          AS customer_email,
     u.name           AS customer_name,
     d.entity_type,
@@ -130,8 +149,25 @@ const fetchBookingsDueReminder = async ({
       WHERE b.is_active
         AND b.reminder_sent_at IS NULL
         AND u.email IS NOT NULL
-        AND d.starts_at BETWEEN NOW() + ($1 || ' hours')::interval
-                            AND NOW() + ($2 || ' hours')::interval
+        -- The reminder window, measured on the **business's** clock.
+        --
+        -- (Still no backticks in here, per the note above — one would end the
+        -- JS template literal this SQL lives in.)
+        --
+        -- starts_at carries the wall clock at the business written into a
+        -- UTC-labelled instant: 10:00 means ten in the morning where the
+        -- business is, stored as 10:00Z. Comparing that against a real NOW()
+        -- compares a wall clock against an instant, so the window slides by the
+        -- organisation's UTC offset — an hour for a UK business in summer,
+        -- eight for one in Los Angeles.
+        --
+        -- This is the one that reaches a customer. A "your booking is tomorrow"
+        -- email sent eight hours out is how someone arrives on the wrong day,
+        -- so both sides are put on the organisation's clock: the stored wall
+        -- clock on the left, today's wall clock on the right.
+        AND (d.starts_at AT TIME ZONE 'UTC')
+              BETWEEN (NOW() AT TIME ZONE o.timezone) + ($1 || ' hours')::interval
+                  AND (NOW() AT TIME ZONE o.timezone) + ($2 || ' hours')::interval
         -- Team only. The same question orgHasCapability asks in
         -- webservice/src/helpers/capabilities.js, in SQL because the reminder
         -- sweep never goes through that service.
@@ -181,7 +217,8 @@ const fetchWaitlistOffer = async (entryId) => {
     `SELECT 'class'::text AS kind, w.id, w.expires_at,
             c.title AS entity_name,
             (w.occurrence_date + c.start_time) AT TIME ZONE 'UTC' AS starts_at,
-            o.name AS org_name, u.email AS customer_email, u.name AS customer_name,
+            o.name AS org_name, o.timezone AS org_timezone,
+            u.email AS customer_email, u.name AS customer_name,
             org_admin.email AS org_email
        FROM class_waitlist w
        JOIN classes c ON c.id = w.class_id

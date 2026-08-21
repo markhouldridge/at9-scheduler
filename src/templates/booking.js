@@ -9,6 +9,13 @@ const { layout, layoutText } = require('./layout');
 // CLAUDE.md): the database stores UTC wall-clock, the app renders UTC, so the
 // email must agree or a customer will be told a different time from the one
 // shown in the app.
+//
+// That renders the right *number* — the stored value is the wall clock at the
+// business — but a number alone does not say **whose** clock. A customer in the
+// UK booking a Los Angeles salon reads "9:00 am" and has no reason to think it
+// is not their own nine o'clock. So the "When" line carries the business's zone
+// beside it: the one place a customer reads a booking time away from the app,
+// with nothing around it to give the game away.
 
 const DATE_FMT = new Intl.DateTimeFormat('en-GB', {
   timeZone: 'UTC',
@@ -43,6 +50,22 @@ const formatWhen = ({ startsAt, endsAt }) => {
   return `${startDate} at ${startTime} → ${endDate} at ${formatTime(endsAt)}`;
 };
 
+// The business's zone, as a reader would name it: "Los Angeles", "London".
+//
+// The IANA identifier ("America/Los_Angeles") is precise and is not what anyone
+// calls the place — the region half is noise to a customer, and the underscore
+// makes it look like a setting rather than a sentence. The city is what makes
+// the difference land.
+//
+// Omitted entirely when it cannot be worked out. A missing zone is better than
+// a wrong one, and the times are correct either way — this line only says which
+// clock they are on.
+const zoneLabel = (timezone) => {
+  if (!timezone || typeof timezone !== 'string') return null;
+  const city = timezone.split('/').pop();
+  return city ? city.replace(/_/g, ' ') : null;
+};
+
 // Human label for the thing that was booked.
 const ENTITY_LABEL = {
   room: 'Room',
@@ -56,12 +79,17 @@ const ENTITY_LABEL = {
 // included, so a booking type that has no end time never shows an empty field.
 const buildDetails = (booking) => {
   const when = formatWhen(booking);
+  const zone = zoneLabel(booking.orgTimezone);
+  // Appended to the value rather than given a row of its own: it qualifies the
+  // time, and a "Time zone" row of its own reads as a separate fact the
+  // customer has to relate back to the one above it.
+  const whenWithZone = when && zone ? `${when} (${zone} time)` : when;
   return [
     booking.entityName && {
       label: ENTITY_LABEL[booking.entityType] || 'Booking',
       value: booking.entityName,
     },
-    when && { label: 'When', value: when },
+    whenWithZone && { label: 'When', value: whenWithZone },
     booking.guests && { label: 'Guests', value: String(booking.guests) },
     booking.reference && { label: 'Reference', value: booking.reference },
   ].filter(Boolean);
@@ -209,6 +237,49 @@ const TEMPLATE_NAMES = {
   'waitlist.offered': 'waitlist-offered',
 };
 
+// The business's own copy — a new booking, or one that has been cancelled.
+//
+// A separate builder rather than a flag on the customer templates: the audience
+// is different in every line. The customer is told about *their* booking and
+// reassured; the business is told *who* booked and asked nothing. Sharing one
+// template and branching inside it produced sentences that read as though
+// written for somebody else, because they were.
+//
+// Reuses `buildDetails`, because the facts are the same facts.
+const providerNotice = (event, booking) => {
+  const created = event === 'booking.created';
+  const who = booking.customerName || 'A customer';
+  const org = booking.orgName || 'your business';
+
+  const parts = {
+    preheader: created
+      ? `${who} has booked with you.`
+      : `${who}'s booking has been cancelled.`,
+    statusLabel: created ? 'New booking' : 'Booking cancelled',
+    heading: created ? 'You have a new booking' : 'A booking was cancelled',
+    intro: created
+      ? `${who} has just booked with ${org}. The details are below.`
+      : booking.cancelReason
+        ? `${who}'s booking with ${org} has been cancelled. Reason given: ${booking.cancelReason}`
+        : `${who}'s booking with ${org} has been cancelled.`,
+    details: buildDetails(booking),
+    // No "reply to us and we can help" line — the business *is* us here.
+    note: 'You are receiving this because your organisation has a notification address set. Change it in Settings, Organisation.',
+    orgName: org,
+  };
+
+  return {
+    // The customer's name leads, because that is what a business scans an
+    // inbox for. The org name would be the same on every one of these.
+    subject: created
+      ? `New booking — ${who}`
+      : `Booking cancelled — ${who}`,
+    html: layout(parts),
+    text: layoutText(parts),
+    template: created ? 'provider-new-booking' : 'provider-booking-cancelled',
+  };
+};
+
 // Builds the email for an event, or null when that event has no template.
 // The returned `template` is carried into the log line so a dashboard can show
 // which template produced each send.
@@ -220,6 +291,7 @@ const buildBookingEmail = (event, booking) => {
 
 module.exports = {
   buildBookingEmail,
+  providerNotice,
   TEMPLATE_NAMES,
   waitlistOffered,
   confirmation,
