@@ -77,6 +77,8 @@ module.exports = {
         'employee@hotel.com',
         'supervisor@hotel.com',
         'user@hotel.com',
+        'free@test.com',
+        'pro@test.com',
         'customer@test.com',
         'amy.smith@test.com',
         'john.smith@test.com',
