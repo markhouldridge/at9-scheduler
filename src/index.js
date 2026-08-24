@@ -11,6 +11,7 @@ const { registerConsumer } = require('./queue/consumer');
 const { rabbitmq } = require('./config');
 const bookingHandler = require('./handlers/booking');
 const customerHandler = require('./handlers/customer');
+const emailHandler = require('./handlers/email');
 const reminders = require('./jobs/reminders');
 const log = require('./logger');
 
@@ -32,6 +33,19 @@ registerConsumer(bus, {
   queue: rabbitmq.customerQueue,
   bindings: rabbitmq.customerBindings,
   handler: customerHandler.handle,
+});
+
+// Generic transactional email — a rendered message published by any service
+// that already knows what it wants to say.
+//
+// `handlers/email.js` has existed since the queue was built and was never
+// registered, so anything publishing `email.*` was silently dropped. Wiring it
+// here is what makes "send an email" a thing the platform can do, rather than
+// something each feature reimplements.
+registerConsumer(bus, {
+  queue: rabbitmq.emailQueue,
+  bindings: rabbitmq.emailBindings,
+  handler: emailHandler.handle,
 });
 
 // Booking reminders are the one email nothing publishes an event for — the

@@ -45,6 +45,20 @@ module.exports = {
     // rendered by different handlers from different payload shapes.
     customerQueue: optional('RABBITMQ_CUSTOMERS_QUEUE', 'customer-messages'),
     customerBindings: ['customer.#'],
+    // **Generic transactional email**, for anything that is already a rendered
+    // message rather than an event to be rendered.
+    //
+    // The two queues above carry *events* — "a booking was created" — and their
+    // handlers fetch what they need and build the email. This one carries the
+    // email itself: subject, html, recipients. That is the difference, and it
+    // is why it earns its own queue rather than another binding.
+    //
+    // Its own queue for the same reason customer mail has one: a stuck or
+    // retrying message here must never sit at the head of the line in front of
+    // a booking confirmation, which is the email a business cannot afford to
+    // lose.
+    emailQueue: optional('RABBITMQ_EMAIL_QUEUE', 'email-messages'),
+    emailBindings: ['email.#'],
   },
   db: {
     // Postgres — the scheduler reads booking/customer/organisation detail to
