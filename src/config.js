@@ -45,6 +45,18 @@ module.exports = {
     // rendered by different handlers from different payload shapes.
     customerQueue: optional('RABBITMQ_CUSTOMERS_QUEUE', 'customer-messages'),
     customerBindings: ['customer.#'],
+    // Account lifecycle (account.welcome) — a person's relationship with At9
+    // rather than with a business, which is why it is not another binding on
+    // the customer queue: the payload shape, the handler and the sender
+    // identity are all different, and the two must not queue behind each other.
+    accountQueue: optional('RABBITMQ_ACCOUNTS_QUEUE', 'account-messages'),
+    accountBindings: ['account.#'],
+    // Sysop test sends (test.email) — one request, one email per template
+    // ticked. Its own queue because it is the one stream that can be asked for
+    // nine messages at once, and a sysop looking at samples must never be the
+    // reason a customer's booking confirmation is late.
+    testQueue: optional('RABBITMQ_TEST_QUEUE', 'test-messages'),
+    testBindings: ['test.#'],
     // **Generic transactional email**, for anything that is already a rendered
     // message rather than an event to be rendered.
     //

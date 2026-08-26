@@ -11,6 +11,8 @@ const { registerConsumer } = require('./queue/consumer');
 const { rabbitmq } = require('./config');
 const bookingHandler = require('./handlers/booking');
 const customerHandler = require('./handlers/customer');
+const accountHandler = require('./handlers/account');
+const testHandler = require('./handlers/testEmail');
 const emailHandler = require('./handlers/email');
 const reminders = require('./jobs/reminders');
 const log = require('./logger');
@@ -33,6 +35,25 @@ registerConsumer(bus, {
   queue: rabbitmq.customerQueue,
   bindings: rabbitmq.customerBindings,
   handler: customerHandler.handle,
+});
+
+// Account lifecycle — the welcome sent once a new registration verifies its
+// email address. Its own queue, so a stuck welcome cannot delay a booking
+// confirmation, and because it is the one email At9 sends as itself.
+registerConsumer(bus, {
+  queue: rabbitmq.accountQueue,
+  bindings: rabbitmq.accountBindings,
+  handler: accountHandler.handle,
+});
+
+// Sysop test sends — every template rendered from one fixed sample, so the
+// mail can be read without booking something and waiting for a sweep. Its own
+// queue: one request can ask for nine emails, and that must never queue in
+// front of a booking confirmation.
+registerConsumer(bus, {
+  queue: rabbitmq.testQueue,
+  bindings: rabbitmq.testBindings,
+  handler: testHandler.handle,
 });
 
 // Generic transactional email — a rendered message published by any service

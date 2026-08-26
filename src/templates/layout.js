@@ -32,8 +32,14 @@
 //   * The hidden <div> after <body> is the preheader — the preview line shown
 //     in the inbox list. It is padded with zero-width characters so the client
 //     does not pull body copy into the preview after it.
-//   * No unsubscribe link: these are transactional messages about a booking
-//     the recipient made, not marketing.
+//   * No unsubscribe link **on transactional mail**: these are messages about a
+//     booking the recipient made, not marketing, and there is nothing to
+//     unsubscribe from. Offering one would invite somebody to opt out of the
+//     confirmation for a booking they have paid for.
+//
+//     Marketing mail passes `unsubscribeUrl` and gets the line. That split is
+//     the whole point of it being a parameter rather than a fixture: the link
+//     appears exactly where the law requires it and nowhere it would do harm.
 
 const BRAND = {
   primary: '#554aca',
@@ -87,6 +93,9 @@ const layout = ({
   note,
   footerNote,
   orgName,
+  // Marketing only — see the note at the top of this file. Absent on every
+  // transactional message, and that is deliberate rather than an omission.
+  unsubscribeUrl,
 }) => `<!doctype html>
 <html lang="en" xmlns:v="urn:schemas-microsoft-com:vml">
   <head>
@@ -178,7 +187,26 @@ const layout = ({
                       ${esc(
                         footerNote ||
                           `This email was sent by ${orgName || 'your provider'} about your booking.`,
-                      )}
+                      )}${
+                        unsubscribeUrl
+                          ? // A plain link, in the footer, at the same size as
+                            // the text around it. Not hidden in 9px grey: a
+                            // deliberately hard-to-find unsubscribe is the
+                            // thing regulators look for, and somebody who
+                            // cannot find it presses "spam" instead — which
+                            // costs the sending domain far more than the
+                            // unsubscribe would have.
+                            //
+                            // `esc` on the URL because it is interpolated into
+                            // an attribute; it is ours rather than user input,
+                            // but a URL is exactly the value that stops being
+                            // ours the day it carries a parameter somebody
+                            // else supplied.
+                            `<br /><br />Don't want these? <a href="${esc(
+                              unsubscribeUrl,
+                            )}" style="color:${BRAND.primary};">Unsubscribe</a>.`
+                          : ''
+                      }
                     </td>
                   </tr>
                 </table>
@@ -195,7 +223,15 @@ const layout = ({
 // Plain-text counterpart. Built from the same pieces so the two versions can
 // never drift, and kept genuinely readable rather than a stripped-tag dump —
 // some recipients (and every spam filter) read this one.
-const layoutText = ({ heading, intro, details = [], note, footerNote, orgName }) =>
+const layoutText = ({
+  heading,
+  intro,
+  details = [],
+  note,
+  footerNote,
+  orgName,
+  unsubscribeUrl,
+}) =>
   [
     heading,
     '',
@@ -208,6 +244,12 @@ const layoutText = ({ heading, intro, details = [], note, footerNote, orgName })
     '---',
     footerNote ||
       `This email was sent by ${orgName || 'your provider'} about your booking.`,
+    // ⚠️ **The plain-text part gets it too.** Some clients render only this,
+    // and an unsubscribe that exists in one half of a multipart message is an
+    // unsubscribe those readers cannot use.
+    ...(unsubscribeUrl
+      ? ['', `Don't want these? Unsubscribe: ${unsubscribeUrl}`]
+      : []),
   ].join('\n');
 
 module.exports = { layout, layoutText, BRAND, esc };
