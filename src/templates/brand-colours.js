@@ -33,11 +33,25 @@
 const fs = require('fs');
 const path = require('path');
 
-// Up out of `scheduler/src/templates` to the repo root. Overridable so a
-// container that lays the tree out differently can point at it.
-const TOKENS_PATH =
-  process.env.AT9_BRAND_TOKENS ||
-  path.join(__dirname, '..', '..', '..', 'at9-brand-themes.tokens.json');
+// ⚠️ **The local copy first, because it is the only one that ships.**
+//
+// This service deploys as its **own repository** — `rsync` carries `scheduler/`
+// alone onto the Queue VPS, so `at9-brand-themes.tokens.json` at the monorepo
+// root is simply not there. Reading only that path meant every email in
+// production would have gone out in the neutral letterhead: no error, no failed
+// deploy, just no provider colours, ever.
+//
+// `brand-themes.tokens.json` beside this file is written by the same generator
+// run and committed with the scheduler, so it travels with the code that reads
+// it. The root path stays as a fallback for a monorepo checkout, and
+// `AT9_BRAND_TOKENS` overrides both.
+const CANDIDATES = [
+  process.env.AT9_BRAND_TOKENS,
+  path.join(__dirname, 'brand-themes.tokens.json'),
+  path.join(__dirname, '..', '..', '..', 'at9-brand-themes.tokens.json'),
+].filter(Boolean);
+
+const TOKENS_PATH = CANDIDATES.find((p) => fs.existsSync(p)) || CANDIDATES[1];
 
 // ⚠️ **A missing artefact must not stop the mail.** Email is the thing this
 // service exists to do; a colour is a decoration on it. If the file is absent —
