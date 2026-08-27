@@ -14,6 +14,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ⚠️ **The gate that stops a broken scheduler reaching the queue server.**
+      #
+      # It runs BEFORE the SSH key is even loaded, so a failure cannot half-ship
+      # anything. The suite is fast and needs no database or broker.
+      #
+      # The specific thing it catches: `BC-1` asserts that
+      # `src/templates/brand-themes.tokens.json` is present. This service
+      # deploys as its own repository, so the copy at the monorepo root does not
+      # travel with it — and `brand-colours.js` degrades rather than crashing, so
+      # a missing artefact means every email silently goes out unbranded with
+      # only a log line to say so. That is exactly the class of failure nobody
+      # notices, and exactly what a deploy gate is for.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.9.0
         with:
