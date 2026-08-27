@@ -81,7 +81,14 @@ const ORG_EMAIL_LATERAL = `
         SELECT NULLIF(TRIM(org_for_email.email), '') AS email
           FROM public.organisations org_for_email
          WHERE org_for_email.id = b.organisation_id
-      ) org_admin ON true`;
+      ) org_admin ON true
+      LEFT JOIN LATERAL (
+        SELECT NULLIF(TRIM(os.value), '') AS brand_theme
+          FROM public.organisation_settings os
+         WHERE os.organisation_id = b.organisation_id
+           AND os.key = 'brandTheme'
+         LIMIT 1
+      ) org_settings ON true`;
 
 const EMAIL_COLUMNS = `
     b.id,
@@ -105,7 +112,14 @@ const EMAIL_COLUMNS = `
     d.entity_name,
     d.starts_at,
     d.ends_at,
-    d.guests`;
+    d.guests,
+    -- The organisation's brand theme, used to tint the emails sent **on their
+    -- behalf** (see the two-shell note in templates/layout.js). A palette id,
+    -- not a colour — templates/brand-colours.js resolves it.
+    --
+    -- Null is a legitimate value and the commonest one: a provider who has not
+    -- chosen gets the neutral letterhead rather than a colour we invented.
+    org_settings.brand_theme AS org_brand_theme`;
 
 // Reads the customer + organisation + booking detail needed to build an email.
 // Multi-room reservations produce several booking rows sharing one customer,
@@ -219,7 +233,8 @@ const fetchWaitlistOffer = async (entryId) => {
             (w.occurrence_date + c.start_time) AT TIME ZONE 'UTC' AS starts_at,
             o.name AS org_name, o.timezone AS org_timezone,
             u.email AS customer_email, u.name AS customer_name,
-            org_admin.email AS org_email
+            org_admin.email AS org_email,
+            org_settings.brand_theme AS org_brand_theme
        FROM class_waitlist w
        JOIN classes c ON c.id = w.class_id
        LEFT JOIN organisations o ON o.id = c.organisation_id
@@ -231,12 +246,34 @@ const fetchWaitlistOffer = async (entryId) => {
             AND au.email IS NOT NULL
           ORDER BY au.created LIMIT 1
        ) org_admin ON true
+       LEFT JOIN LATERAL (
+         SELECT NULLIF(TRIM(os.value), '') AS brand_theme
+           FROM public.organisation_settings os
+          WHERE os.organisation_id = c.organisation_id
+            AND os.key = 'brandTheme'
+          LIMIT 1
+       ) org_settings ON true
       WHERE w.id = $1
       UNION ALL
+     -- WARNING: column count and order must match the class branch above.
+     --
+     -- This branch was missing o.timezone, so the two sides had ten columns and
+     -- nine. Postgres refuses that at PLAN time -- "each UNION query must have
+     -- the same number of columns" -- so fetchWaitlistOffer never returned, for
+     -- events or classes, and no waitlist offer email had ever been sent. A
+     -- customer was given a place with a deadline ticking on it and never told.
+     --
+     -- It hid because the only caller throws on any error and the queue retries
+     -- once and drops; nothing distinguishes a malformed query from a bad
+     -- minute on the broker.
+     --
+     -- (No backticks in this comment: the SQL sits inside a JS template
+     -- literal, and one would end the string.)
      SELECT 'event'::text, w.id, w.expires_at,
             e.title,
             (COALESCE(w.booking_date, e.start_date) + e.start_time) AT TIME ZONE 'UTC',
-            o.name, u.email, u.name, org_admin.email
+            o.name, o.timezone, u.email, u.name, org_admin.email,
+            org_settings.brand_theme
        FROM event_waitlist w
        JOIN events e ON e.id = w.event_id
        LEFT JOIN organisations o ON o.id = e.organisation_id
@@ -248,6 +285,13 @@ const fetchWaitlistOffer = async (entryId) => {
             AND au.email IS NOT NULL
           ORDER BY au.created LIMIT 1
        ) org_admin ON true
+       LEFT JOIN LATERAL (
+         SELECT NULLIF(TRIM(os.value), '') AS brand_theme
+           FROM public.organisation_settings os
+          WHERE os.organisation_id = e.organisation_id
+            AND os.key = 'brandTheme'
+          LIMIT 1
+       ) org_settings ON true
       WHERE w.id = $1`,
     [entryId],
   );

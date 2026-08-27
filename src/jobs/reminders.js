@@ -5,7 +5,7 @@ const {
   markRemindersSent,
 } = require('../services/bookingRepo');
 const { sendEmail } = require('../services/brevo');
-const { buildBookingEmail } = require('../templates/booking');
+const { buildEmail } = require('../templates');
 const log = require('../logger');
 
 // Booking reminders — the one email that isn't triggered by an event.
@@ -38,7 +38,7 @@ const runOnce = async () => {
   let failed = 0;
 
   for (const row of rows) {
-    const built = buildBookingEmail('booking.reminder', {
+    const built = buildEmail('booking.reminder', {
       orgName: row.org_name,
       orgEmail: row.org_email,
       customerName: row.customer_name,

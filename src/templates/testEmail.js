@@ -1,8 +1,14 @@
 'use strict';
 
-const bookingTemplates = require('./booking');
-const { welcome: customerWelcome } = require('./customer');
-const { welcome: accountWelcome, offers: accountOffers } = require('./account');
+const { confirmation } = require('./booking-confirmation');
+const { updated } = require('./booking-updated');
+const { cancelled } = require('./booking-cancelled');
+const { reminder } = require('./booking-reminder');
+const { waitlistOffered } = require('./waitlist-offered');
+const { providerNotice } = require('./provider-notice');
+const { welcome: customerWelcome } = require('./customer-welcome');
+const { welcome: accountWelcome } = require('./account-welcome');
+const { offers: accountOffers } = require('./account-offers');
 
 // **Every email At9 sends, rendered from one sample, on demand.**
 //
@@ -41,6 +47,12 @@ const sampleBooking = (context) => ({
   orgName: context.orgName || 'Your Business',
   orgEmail: context.orgEmail || null,
   orgTimezone: context.orgTimezone || 'Europe/London',
+  // The palette id an organisation stores in `brandTheme`. Passed through so a
+  // sysop sending themselves a sample sees the provider-branded shell as a real
+  // provider would — and can send it twice, with and without, to check the
+  // neutral fallback. Unset is the commonest production state, so it is worth
+  // being able to look at.
+  orgBrandTheme: context.orgBrandTheme || null,
   entityType: 'service',
   entityName: 'Cut and Colour',
   startsAt: '2026-09-12T14:30:00.000Z',
@@ -60,20 +72,21 @@ const sampleBooking = (context) => ({
 // the Grafana email panel (`TEMPLATE_NAMES` in each template module), so what a
 // sysop picks here is the same string they will later search the logs for.
 const TEMPLATES = {
-  'booking-confirmation': (c) => bookingTemplates.confirmation(sampleBooking(c)),
-  'booking-updated': (c) => bookingTemplates.updated(sampleBooking(c)),
-  'booking-cancelled': (c) => bookingTemplates.cancelled(sampleBooking(c)),
-  'booking-reminder': (c) => bookingTemplates.reminder(sampleBooking(c)),
-  'waitlist-offered': (c) => bookingTemplates.waitlistOffered(sampleBooking(c)),
+  'booking-confirmation': (c) => confirmation(sampleBooking(c)),
+  'booking-updated': (c) => updated(sampleBooking(c)),
+  'booking-cancelled': (c) => cancelled(sampleBooking(c)),
+  'booking-reminder': (c) => reminder(sampleBooking(c)),
+  'waitlist-offered': (c) => waitlistOffered(sampleBooking(c)),
   'provider-new-booking': (c) =>
-    bookingTemplates.providerNotice('booking.created', sampleBooking(c)),
+    providerNotice('booking.created', sampleBooking(c)),
   'provider-booking-cancelled': (c) =>
-    bookingTemplates.providerNotice('booking.cancelled', sampleBooking(c)),
+    providerNotice('booking.cancelled', sampleBooking(c)),
   'customer-welcome': (c) =>
     customerWelcome({
       customerName: c.customerName || 'Sam Taylor',
       orgName: c.orgName || 'Your Business',
       orgEmail: c.orgEmail || null,
+      orgBrandTheme: c.orgBrandTheme || null,
     }),
   'account-welcome': (c) => accountWelcome({ name: c.customerName || 'Sam' }),
   // ⚠️ **The one sample carrying a real, working unsubscribe link.** The URL is

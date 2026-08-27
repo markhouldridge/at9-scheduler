@@ -2,7 +2,7 @@
 
 const { PermanentError } = require('../queue/errors');
 const { sendEmail } = require('../services/brevo');
-const { buildCustomerEmail } = require('../templates/customer');
+const { buildEmail } = require('../templates');
 const log = require('../logger');
 
 // Consumes customer lifecycle events published by the webservice
@@ -28,7 +28,7 @@ const handle = async (payload, ctx) => {
   }
 
   const event = payload.event || ctx.routingKey;
-  const built = buildCustomerEmail(event, payload);
+  const built = buildEmail(event, payload);
   if (!built) {
     // Consumed, not retried — an event with no template will never grow one
     // by being redelivered.

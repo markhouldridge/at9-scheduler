@@ -3,7 +3,7 @@
 const { PermanentError } = require('../queue/errors');
 const { fetchBookingRecipients, fetchWaitlistOffer } = require('../services/bookingRepo');
 const { sendEmail } = require('../services/brevo');
-const { buildBookingEmail, providerNotice } = require('../templates/booking');
+const { buildEmail, providerNotice } = require('../templates');
 const log = require('../logger');
 
 // Consumes booking lifecycle events published by the webservice
@@ -22,7 +22,7 @@ const log = require('../logger');
 //
 // The event carries IDs only, so the customer address and the booking detail
 // are read from Postgres (services/bookingRepo) and rendered by
-// templates/booking before going out through Brevo.
+// templates/ before going out through Brevo.
 
 // Every lifecycle event now has a template. Anything else is consumed and
 // logged rather than retried.
@@ -44,10 +44,12 @@ const handleWaitlistOffer = async (payload, ctx) => {
     throw new PermanentError('waitlist entry has no customer email address');
   }
 
-  const built = buildBookingEmail('waitlist.offered', {
+  const built = buildEmail('waitlist.offered', {
     orgName: offer.org_name,
     orgTimezone: offer.org_timezone,
     orgEmail: offer.org_email,
+    // Their colour, for mail sent in their name. See templates/layout.js.
+    orgBrandTheme: offer.org_brand_theme,
     customerName: offer.customer_name,
     entityType: offer.kind,
     entityName: offer.entity_name,
@@ -121,12 +123,13 @@ const handle = async (payload, ctx) => {
   const [first] = rows;
   const refs = rows.map((r) => r.reference).filter(Boolean);
 
-  const built = buildBookingEmail(event, {
+  const built = buildEmail(event, {
     orgName: first.org_name,
     // Which clock the times below are on. See the note in templates/booking.js:
     // the numbers were always the business's wall clock, but nothing said so.
     orgTimezone: first.org_timezone,
     orgEmail: first.org_email,
+    orgBrandTheme: first.org_brand_theme,
     customerName: first.customer_name,
     entityType: first.entity_type,
     entityName:
