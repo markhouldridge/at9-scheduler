@@ -182,17 +182,25 @@ const fetchBookingsDueReminder = async ({
         AND (d.starts_at AT TIME ZONE 'UTC')
               BETWEEN (NOW() AT TIME ZONE o.timezone) + ($1 || ' hours')::interval
                   AND (NOW() AT TIME ZONE o.timezone) + ($2 || ' hours')::interval
-        -- Team only. The same question orgHasCapability asks in
+        -- The same question orgHasCapability asks in
         -- webservice/src/helpers/capabilities.js, in SQL because the reminder
         -- sweep never goes through that service.
+        --
+        -- ⚠️ It tests the **capability**, never a plan name -- which is why the
+        -- test below names 'booking_reminders' and nothing else. There are two
+        -- paid tiers (Pro and Team, SPECIFICATION.md > Subscriptions), Team is
+        -- sold as a superset of Pro, and reminders are a Pro capability. A
+        -- comment here once said "Team only" and another said Team was the only
+        -- paid plan; both were wrong and neither could be seen from the SQL,
+        -- which had been right all along.
         --
         -- (No backticks in here: this SQL lives in a JS template literal, and
         -- one would end the string.)
         --
         -- There used to be a second branch here for the 90-day trial, which
-        -- granted every Team feature. The trial went when Solo became Free:
-        -- taking bookings costs nothing and Team is the only paid plan, so an
-        -- active subscription carrying the capability is the whole test.
+        -- granted every paid feature. The trial went when Solo became Free:
+        -- taking bookings costs nothing, so an active subscription carrying the
+        -- capability is the whole test.
         AND EXISTS (
               SELECT 1
                 FROM public.organisation_subscriptions os
