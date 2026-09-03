@@ -291,6 +291,38 @@ const appPromptBlock = (t, prompt) => `
                   </tr>
                 </table>`;
 
+// A single button pointing wherever the caller says.
+//
+// ⚠️ **Distinct from `appPrompt`, which is not a link to anywhere** — it is a
+// pair of store buttons for a reader who has to *open the app* to act. This is
+// for the case where the action is the URL itself and there is no app step:
+// today, confirming an email address, where the link is a one-time code minted
+// by Firebase.
+//
+// Rendered as a real anchor rather than a bordered stamp, because it is the
+// whole purpose of the message: a reader who does not press it has not finished
+// signing up. The bare URL is printed underneath — a link-stripping client, or
+// a reader who does not trust a button, still has something to copy.
+const ctaBlock = (t, cta) => `
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:26px;">
+                  <tr>
+                    <td bgcolor="${t.accent}" style="background:${
+                      t.accent
+                    };padding:14px 26px;">
+                      <a href="${cta.url}" style="font-family:${DISPLAY};font-size:16px;line-height:21px;font-weight:600;color:#ffffff;text-decoration:none;display:block;white-space:nowrap;">${esc(
+                        cta.label,
+                      )}</a>
+                    </td>
+                  </tr>
+                </table>
+                <div class="bk-text" style="font-family:${BODY};font-size:13px;line-height:20px;color:${
+                  t.inkFaint
+                };padding-top:14px;word-break:break-all;mso-line-height-rule:exactly;">${esc(
+                  cta.fallback || '',
+                )}<br /><a href="${cta.url}" style="color:${
+                  t.inkFaint
+                };">${esc(cta.url)}</a></div>`;
+
 // The imprint. On **every** email, both shells, and the only mention of At9 in
 // provider mail.
 //
@@ -324,6 +356,10 @@ const layout = ({
   // { label, body } — renders the app-store prompt. Omit on emails that ask
   // nothing of the reader.
   appPrompt,
+  // { label, url, fallback } — one button to a given URL, plus the bare link
+  // beneath it. For an action that *is* a link, rather than one that needs the
+  // app. See `ctaBlock`.
+  cta,
   footerNote,
   orgName,
   // Marketing only — see the note at the top of this file. Absent on every
@@ -407,6 +443,7 @@ const layout = ({
                     : ''
                 }
 
+                ${cta ? ctaBlock(t, cta) : ''}
                 ${appPrompt ? appPromptBlock(t, appPrompt) : ''}
 
                 ${
@@ -486,6 +523,7 @@ const layoutText = ({
   details = [],
   note,
   appPrompt,
+  cta,
   footerNote,
   orgName,
   unsubscribeUrl,
@@ -503,6 +541,12 @@ const layoutText = ({
     intro,
     ...(details.length
       ? ['', ...details.map((d) => `${pad(d.label)}${d.value}`)]
+      : []),
+    // Before `appPrompt`, matching the HTML order — and in plain text the URL
+    // *is* the button, so it must not sit below a pair of store links the
+    // reader has no use for yet.
+    ...(cta
+      ? ['', cta.label.toUpperCase(), ...(cta.fallback ? [cta.fallback] : []), cta.url]
       : []),
     ...(appPrompt
       ? [

@@ -32,6 +32,31 @@ const EMAILABLE = new Set([
   'booking.cancelled',
 ]);
 
+// **Which updates the business is told about.**
+//
+// A provider editing a booking in the app does not need an email about the
+// change they just made, and sending one is the fastest way to teach somebody
+// to filter these out. Anyone *else* changing it is the opposite: a customer
+// moving their class booking to another Tuesday silently moves a place the
+// business had set aside, and until now nothing said so.
+//
+// So the rule is the actor, not the event. `source` is set by the webservice at
+// every publish site (`source: isMember ? 'provider' : 'self'` where a customer
+// can reach the route at all).
+//
+// ⚠️ **Absent `source` is treated as provider-made**, which is the quiet
+// option: an older webservice that has not been deployed yet publishes updates
+// with no `source` at all, and the wrong guess in that direction sends nothing
+// rather than emailing a business about every edit it makes itself. The
+// webservice may be deployed before or after this — neither order misbehaves.
+const PROVIDER_NOTIFIABLE_UPDATE_SOURCES = new Set(['self', 'public', 'customer']);
+
+const shouldNotifyProvider = (event, payload) => {
+  if (event === 'booking.created' || event === 'booking.cancelled') return true;
+  if (event !== 'booking.updated') return false;
+  return PROVIDER_NOTIFIABLE_UPDATE_SOURCES.has(payload?.source);
+};
+
 // A waitlist offer is not a booking, so it is looked up from its own table and
 // emailed with the deadline the customer has to accept by.
 const handleWaitlistOffer = async (payload, ctx) => {
@@ -158,8 +183,8 @@ const handle = async (payload, ctx) => {
 
   // ⚠️ The business's own copy, after the customer's and never instead of it.
   //
-  // Only for new bookings and cancellations — an update is noise to a business
-  // that made the change itself, which is the commonest way one happens.
+  // New bookings and cancellations always; an update only when somebody other
+  // than the business made it — see `shouldNotifyProvider`.
   //
   // Sent only when `organisations.email` is set, which is now the *only* thing
   // `org_email` can be — the admin fallback is gone, so there is one address
@@ -169,7 +194,7 @@ const handle = async (payload, ctx) => {
   // and a throw would requeue the whole thing and send it to them twice — a
   // duplicate confirmation is a worse outcome than a missed internal copy.
   const notifyTo = first.org_email;
-  if (notifyTo && (event === 'booking.created' || event === 'booking.cancelled')) {
+  if (notifyTo && shouldNotifyProvider(event, payload)) {
     try {
       const notice = providerNotice(event, {
         orgName: first.org_name,
@@ -186,6 +211,12 @@ const handle = async (payload, ctx) => {
         reference: refs.join(', ') || null,
         cancelReason: first.cancel_reason,
       });
+
+      // Belt and braces: `shouldNotifyProvider` only passes the three events
+      // that have a shape, so this cannot be null today. It is here so that
+      // adding a fourth event to one of the two lists and not the other is a
+      // silent no-send rather than a thrown TypeError.
+      if (!notice) throw new Error(`no provider notice for event: ${event}`);
 
       await sendEmail({
         to: notifyTo,

@@ -141,8 +141,8 @@ const fetchBookingRecipients = async (bookingIds) => {
 
 // Bookings starting inside the reminder window that have not been reminded
 // yet, restricted to organisations whose active subscriptions carry the
-// `booking_reminders` capability — the Team-only gate, enforced here in the
-// sender rather than trusted from a client.
+// `booking_reminders` capability — a Pro capability (Team carries it as a
+// superset), enforced here in the sender rather than trusted from a client.
 //
 // The window is a range rather than a "tomorrow" equality so a scheduler that
 // was briefly down still catches bookings when it returns; `reminder_sent_at`

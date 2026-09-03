@@ -30,6 +30,7 @@ const { waitlistOffered } = require('./waitlist-offered');
 const { providerNotice } = require('./provider-notice');
 const { welcome: customerWelcome } = require('./customer-welcome');
 const { welcome: accountWelcome } = require('./account-welcome');
+const { verifyEmail: accountVerifyEmail } = require('./account-verify-email');
 const { offers } = require('./account-offers');
 
 // Event → builder. Events are namespaced (`booking.`, `customer.`, `account.`),
@@ -44,6 +45,7 @@ const TEMPLATES = {
   'waitlist.offered': waitlistOffered,
   'customer.welcome': customerWelcome,
   'account.welcome': accountWelcome,
+  'account.verify_email': accountVerifyEmail,
   'account.offers': offers,
 };
 
@@ -56,6 +58,7 @@ const TEMPLATE_NAMES = {
   'waitlist.offered': 'waitlist-offered',
   'customer.welcome': 'customer-welcome',
   'account.welcome': 'account-welcome',
+  'account.verify_email': 'account-verify-email',
   'account.offers': 'account-offers',
 };
 

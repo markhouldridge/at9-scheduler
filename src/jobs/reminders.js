@@ -19,9 +19,9 @@ const log = require('../logger');
 //     process that restarted, still catches everything it missed;
 //   * `bookings.reminder_sent_at` is what guarantees one send, not the timing.
 //
-// The Team-only gate lives in the SQL (`booking_reminders` must be among the
-// capabilities of an active subscription), so an organisation that lapses
-// stops being charged for reminders the moment its subscription expires.
+// The paid gate lives in the SQL (`booking_reminders`, a Pro capability, must
+// be among the capabilities of an active subscription), so an organisation
+// that lapses stops getting reminders the moment its subscription expires.
 
 const TICK_MS = 60 * 60 * 1000; // hourly
 
